@@ -7,13 +7,15 @@
 // given is only ever called, never stored.
 
 import {
-  CAR, CITY, DAY_LENGTH, ECONOMY, HELI, MISSIONS, PLAYER, POLICE, WANTED, WORLD,
+  CAR, CITY, CREW_LINES, DAY_LENGTH, DISTRICTS, ECONOMY, HELI, MISSIONS, PLAYER, POLICE,
+  RESPECT, WANTED, WEAPON_STATS, WORLD,
 } from './config.js';
 import {
   buildCity, hitsBuilding, isRoadAt, isWaterAt, nearestRoadPoint,
   resolveBuildingCollision, trafficLightState,
 } from './city.js';
 import { randomInt, randomPick } from './random.js';
+import { POLICE_CALLSIGNS, WEAPONS, districtAt } from './systems.js';
 
 export const EVENT_HIT = 1;
 export const EVENT_SHOT = 2;
@@ -95,6 +97,7 @@ export function createWorld(random, saved) {
     x: 600, z: 620, angle: -Math.PI / 2, health: PLAYER.health, armor: PLAYER.armor,
     money: saved?.money ?? ECONOMY.startMoney, ammo: PLAYER.ammoStart,
     wanted: 0, inCar: null, speed: 0, fireTimer: 0, bustTimer: 0, regenTimer: 0,
+    weapon: 1, respect: 0,
   };
 
   const cars = [];
@@ -110,7 +113,8 @@ export function createWorld(random, saved) {
       kind, health: CAR.health, driver: kind === 'traffic',
       axis: Math.abs(Math.cos(angle)) > 0.5 ? 'x' : 'z',
       dir: Math.cos(angle) >= 0 ? 1 : -1, cruise: 10 + random() * 6,
-      lost: false, stolen: false,
+      lost: false, stolen: false, tune: 1 + Math.floor(random() * 3),
+      callsign: null, role: null,
     };
     cars.push(car);
     return car;
@@ -130,6 +134,44 @@ export function createWorld(random, saved) {
     const angle = horizontal ? (random() < 0.5 ? 0 : Math.PI) : (random() < 0.5 ? Math.PI / 2 : -Math.PI / 2);
     const car = addCar(road.x, road.z, angle, randomPick(random, TRAFFIC_COLORS), 'traffic');
     car.speed = car.cruise;
+  }
+
+  // Roadside parked cars: the streets read empty without them. They sit on
+  // the sidewalk edge (56 units off the road line), clear of buildings, and
+  // can be stolen like any parked car.
+  for (let i = 0; i < 14; i += 1) {
+    const horizontal = random() < 0.5;
+    let x; let z; let angle;
+    if (horizontal) {
+      const rz = randomPick(random, CITY.roadsZ);
+      x = 260 + random() * (WORLD.width - 520);
+      z = rz + (random() < 0.5 ? -1 : 1) * 56;
+      angle = random() < 0.5 ? 0 : Math.PI;
+    } else {
+      const rx = randomPick(random, CITY.roadsX);
+      x = rx + (random() < 0.5 ? -1 : 1) * 56;
+      z = 260 + random() * (CITY.harborZ - 520);
+      angle = random() < 0.5 ? Math.PI / 2 : -Math.PI / 2;
+    }
+    addCar(x, z, angle, randomPick(random, TRAFFIC_COLORS), 'parked');
+  }
+  // Deterministic set: tucked 8m off the centerline of the roads the drive
+  // frame actually shows. The autopilot runs east along z=900 from the
+  // hideout to the x=2600 cross street (40 s at ~38 m/s), so the frame ends
+  // around x=2450 on z=900, looking east — line that stretch and the
+  // crossing, plus the hideout approach the start shot looks down.
+  const downtownRoadside = [
+    [2400, 908, 0], [2600, 908, 0], [2800, 908, 0],
+    [2500, 892, Math.PI], [2700, 892, Math.PI], [2900, 892, Math.PI],
+    [2400, 1208, 0], [2600, 1208, 0], [2800, 1208, 0],
+    [2500, 1192, Math.PI], [2700, 1192, Math.PI],
+    [2608, 850, Math.PI / 2], [2608, 950, Math.PI / 2], [2608, 1050, Math.PI / 2],
+    [2592, 900, -Math.PI / 2], [2592, 1000, -Math.PI / 2],
+    [700, 608, 0], [820, 608, 0], [940, 608, 0],
+    [608, 700, Math.PI / 2], [608, 820, Math.PI / 2],
+  ];
+  for (const [x, z, angle] of downtownRoadside) {
+    addCar(x, z, angle, randomPick(random, TRAFFIC_COLORS), 'parked');
   }
 
   function addPed(x, z) {
@@ -156,6 +198,13 @@ export function createWorld(random, saved) {
       const midZ = (CITY.roadsZ[iz] + CITY.roadsZ[iz + 1]) / 2;
       addPed(rx + (random() < 0.5 ? -1 : 1) * (54 + random() * 14), midZ + (random() - 0.5) * 160);
     }
+  }
+  // Downtown foot traffic: a second wave of pedestrians on the main
+  // avenues, so the foreground never reads as an empty street.
+  for (let i = 0; i < 12; i += 1) {
+    const rx = randomPick(random, [1000, 1400, 1800, 2200, 2600]);
+    const rz = randomPick(random, [600, 1000, 1400]);
+    addPed(rx + (random() - 0.5) * 220, rz + (random() < 0.5 ? -1 : 1) * (54 + random() * 14));
   }
 
   const cashSpots = [
@@ -185,14 +234,46 @@ export function createWorld(random, saved) {
   const state = {
     player, cars, peds, rivals, bullets, particles, pickups,
     city, mission, camera, heli, roadblocks,
-    time: 0, clock: 0, crimeTimer: 0, wantedTimer: 0, message: '', messageTimer: 0,
+    time: 0, clock: 0, day: 1, crimeTimer: 0, wantedTimer: 0, message: '', messageTimer: 0,
     storyDone: false, bestMoney: saved?.bestMoney ?? 0, crimeLog: [],
     missionTarget: null, missionText: '',
+    dialog: null, dialogTimer: 0,
+    standing: Object.fromEntries(DISTRICTS.map((d) => [d.name, 58])),
   };
 
   function setMessage(text, seconds) {
     state.message = text;
     state.messageTimer = seconds || 4;
+  }
+
+  /** Crew dialogue on screen: a face, a name and a line, for `seconds`. */
+  function setDialog(who, text, seconds) {
+    state.dialog = { who, text };
+    state.dialogTimer = seconds || 8;
+  }
+
+  /** Respect, with an unlock toast when a weapon slot opens up. */
+  function grantRespect(amount) {
+    const before = player.respect;
+    player.respect = Math.min(RESPECT.max, player.respect + amount);
+    for (let i = 2; i < RESPECT.unlock.length; i += 1) {
+      if (before < RESPECT.unlock[i] && player.respect >= RESPECT.unlock[i]) {
+        setMessage(`RESPECT ${player.respect} — ${WEAPONS[i].name} unlocked! Press Q to cycle weapons.`, 5);
+      }
+    }
+  }
+
+  /** Cycle to the next unlocked weapon (Q). Locked slots are skipped. */
+  function cycleWeapon() {
+    for (let i = 1; i <= WEAPONS.length; i += 1) {
+      const next = (player.weapon + i) % WEAPONS.length;
+      if (player.respect >= RESPECT.unlock[next]) {
+        player.weapon = next;
+        setMessage(`${WEAPONS[next].name} equipped`, 2);
+        return;
+      }
+    }
+    setMessage('Only FISTS and VESPER 9MM are unlocked — earn respect to unlock more.', 3);
   }
 
   function addWanted(amount, reason) {
@@ -203,6 +284,9 @@ export function createWorld(random, saved) {
     if (player.wanted > before) {
       state.crimeLog.push({ t: Math.round(state.time), reason, wanted: player.wanted });
       if (state.crimeLog.length > 20) state.crimeLog.shift();
+      // Crime sours the district you are standing in.
+      const dName = districtAt(player.x, player.z).name;
+      state.standing[dName] = Math.max(0, (state.standing[dName] ?? 58) - 3);
       setMessage(`${reason} — Wanted level ${player.wanted} ★`, 3);
       return EVENT_WANTED_UP;
     }
@@ -287,10 +371,13 @@ export function createWorld(random, saved) {
 
   function shootAt(targetX, targetZ, audio) {
     if (player.fireTimer > 0) return 0;
+    // Fists never fire a bullet: shooting with them is a punch.
+    if (player.weapon === 0) return punch(audio);
     const ox = player.inCar ? player.inCar.x : player.x;
     const oz = player.inCar ? player.inCar.z : player.z;
     if (player.ammo <= 0) return punch(audio);
-    player.fireTimer = PLAYER.fireInterval;
+    const stats = WEAPON_STATS[player.weapon] || WEAPON_STATS[1];
+    player.fireTimer = stats.interval;
     player.ammo -= 1;
     const angle = angleTo(ox, oz, targetX, targetZ);
     bullets.push({
@@ -364,11 +451,15 @@ export function createWorld(random, saved) {
     setMessage(`${m.title}: ${m.goal}`, 6);
     state.missionText = m.briefing;
     mission.text = m.briefing;
+    // The crew opens the job: a face, a name and the briefing line.
+    const lines = CREW_LINES[m.id] || [];
+    if (lines[0]) setDialog(lines[0].who, lines[0].text, 9);
   }
 
   function completeMission(audio) {
     const m = MISSIONS[mission.index];
     player.money += m.reward;
+    grantRespect(RESPECT.missionDone);
     state.bestMoney = Math.max(state.bestMoney, player.money);
     audio?.jingle?.();
     setMessage(`${m.title} complete! +$${m.reward}`, 5);
@@ -422,6 +513,8 @@ export function createWorld(random, saved) {
           });
         }
         setMessage('Dock Rats! Deal with them.', 4);
+        const rl = CREW_LINES[m.id] || [];
+        if (rl[1]) setDialog(rl[1].who, rl[1].text, 8);
       }
       const alive = rivals.filter((r) => r.alive).length;
       if (mission.rivalsSpawned && alive === 0 && !mission.briefcase) {
@@ -432,13 +525,22 @@ export function createWorld(random, saved) {
         mission.briefcase = null;
         mission.stage = 'return';
         setMessage('Got it. Bring it to the hideout.', 4);
+        const rl2 = CREW_LINES[m.id] || [];
+        if (rl2[2]) setDialog(rl2[2].who, rl2[2].text, 8);
       }
       if (mission.stage === 'return' && distance(px, pz, 600, 600) < 12) {
         events |= completeMission(audio);
       }
     } else if (m.kind === 'escape') {
-      if (player.wanted === 0 && distance(px, pz, 600, 600) < 12) {
-        events |= completeMission(audio);
+      if (player.wanted === 0) {
+        if (mission.stage === 'escape') {
+          mission.stage = 'home';
+          const el = CREW_LINES[m.id] || [];
+          if (el[1]) setDialog(el[1].who, el[1].text, 8);
+        }
+        if (distance(px, pz, 600, 600) < 12) {
+          events |= completeMission(audio);
+        }
       }
     } else if (m.kind === 'heist') {
       if (mission.stage === 'start' && distance(px, pz, m.target.x, m.target.z) < 12) {
@@ -456,6 +558,8 @@ export function createWorld(random, saved) {
             player.money += 500;
             player.wanted = Math.max(player.wanted, 4);
             setMessage('Vault open! $500 grabbed — escape to the boat at the harbor!', 5);
+            const hl = CREW_LINES[m.id] || [];
+            if (hl[1]) setDialog(hl[1].who, hl[1].text, 8);
           }
         }
       } else if (mission.stage === 'run' && distance(px, pz, 1800, 2380) < 14) {
@@ -636,6 +740,12 @@ export function createWorld(random, saved) {
       const cop = addCar(road.x, road.z, angleTo(road.x, road.z, px, pz), '#e8e4da', 'police');
       cop.speed = POLICE.maxSpeed * 0.7;
       cop.health = 60;
+      // A named unit: first free callsign, role by spawn order — the first
+      // cop runs the player down, the next cuts them off, the rest pursue.
+      const used = new Set(cars.filter((c) => c.callsign).map((c) => c.callsign));
+      cop.callsign = POLICE_CALLSIGNS.find((c) => !used.has(c)) || `PCPD-${cop.id}`;
+      const n = cars.filter((c) => c.kind === 'police').length;
+      cop.role = n === 1 ? 'RAMMING' : n === 2 ? 'CUT-OFF' : 'PURSUE';
       active += 1;
     }
     // Standing down: when the heat is gone, police drive off.
@@ -711,6 +821,7 @@ export function createWorld(random, saved) {
         car.kind = 'parked';
         car.speed = 0;
         car.health = 0;
+        grantRespect(RESPECT.copDown);
         events |= addWanted(WANTED.killCop, 'Cop car destroyed');
       }
     }
@@ -767,6 +878,8 @@ export function createWorld(random, saved) {
       if (hitsBuilding(city, bx, bz, 4)) continue;
       const block = addCar(bx, bz, blockAngle, '#e8e4da', 'roadblock');
       block.speed = 0;
+      block.callsign = `TAC-${40 + roadblocks.length}`;
+      block.role = 'ROADBLOCK';
       roadblocks.push(block);
     }
     if (roadblocks.length > 0) setMessage('Roadblock ahead!', 3);
@@ -774,6 +887,7 @@ export function createWorld(random, saved) {
 
   function updateBullets(dt) {
     let events = 0;
+    const dmg = (WEAPON_STATS[player.weapon] || WEAPON_STATS[1]).damage;
     for (const bullet of bullets) {
       bullet.x += bullet.vx * dt;
       bullet.z += bullet.vz * dt;
@@ -782,10 +896,13 @@ export function createWorld(random, saved) {
       // Rivals first.
       for (const rival of rivals) {
         if (rival.alive && distance(bullet.x, bullet.z, rival.x, rival.z) < 1.6) {
-          rival.health -= PLAYER.shootDamage;
+          rival.health -= dmg;
           bullet.life = 0;
           spawnParticles(rival.x, 1.2, rival.z, '#e5534b', 6, 9);
-          if (rival.health <= 0) rival.alive = false;
+          if (rival.health <= 0) {
+            rival.alive = false;
+            grantRespect(RESPECT.rivalDown);
+          }
           break;
         }
       }
@@ -797,7 +914,7 @@ export function createWorld(random, saved) {
         const localX = dx * Math.cos(-car.angle) - dz * Math.sin(-car.angle);
         const localZ = dx * Math.sin(-car.angle) + dz * Math.cos(-car.angle);
         if (Math.abs(localX) < CAR.length / 2 && Math.abs(localZ) < CAR.width / 2) {
-          car.health -= PLAYER.shootDamage;
+          car.health -= dmg;
           bullet.life = 0;
           spawnParticles(bullet.x, 1.2, bullet.z, '#ffd23e', 5, 8);
           if (car.health <= 0 && car.kind === 'traffic') {
@@ -873,6 +990,7 @@ export function createWorld(random, saved) {
       if (distance(px, pz, pickup.x, pickup.z) < 4) {
         pickup.taken = true;
         player.money += ECONOMY.pickupValue;
+        grantRespect(RESPECT.pickup);
         audio?.pickup?.();
         setMessage(`Cash found! +$${ECONOMY.pickupValue}`, 2);
         return EVENT_PICKUP;
@@ -996,8 +1114,15 @@ export function createWorld(random, saved) {
     let events = 0;
     state.time += dt;
     state.clock += dt;
+    // A new day every DAY_LENGTH seconds of play.
+    state.day = 1 + Math.floor(state.clock / DAY_LENGTH);
     state.crimeTimer += dt;
     if (state.messageTimer > 0) state.messageTimer -= dt;
+    if (state.dialogTimer > 0) state.dialogTimer -= dt;
+    // District standing: drifts back toward neutral over time.
+    const here = districtAt(player.x, player.z).name;
+    const cur = state.standing[here] ?? 58;
+    state.standing[here] = Math.max(0, Math.min(100, cur + (58 - cur) * 0.0004));
     // Slow health regen after 8 seconds without taking damage.
     player.regenTimer += dt;
     if (player.regenTimer > 8 && player.health > 0 && player.health < PLAYER.health) {
@@ -1019,6 +1144,7 @@ export function createWorld(random, saved) {
     }
 
     events |= updatePlayer(dt, input, audio);
+    if (input.weaponCycle) cycleWeapon();
     events |= updateMission(dt, audio);
     state.missionTarget = missionTarget();
     updateTraffic(dt);
@@ -1057,6 +1183,7 @@ export function createWorld(random, saved) {
     player.inCar = null;
     player.bustTimer = 0;
     player.fireTimer = 0;
+    player.weapon = 1;
     // Every car goes back to how the city built it; rivals, bullets and
     // pickups reset too, so a staged scene starts from a clean city.
     for (let i = cars.length - 1; i >= 0; i -= 1) {
@@ -1089,7 +1216,7 @@ export function createWorld(random, saved) {
   startMission(mission.index);
 
   return {
-    state, step, reset, startMission, missionTarget,
+    state, step, reset, startMission, missionTarget, cycleWeapon,
     /** The current mission definition, or null when the story is done. */
     currentMission() {
       return MISSIONS[mission.index] || null;

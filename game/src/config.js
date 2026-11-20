@@ -1,30 +1,36 @@
 // Neon Bay — every tuning number, colour and mission in one place.
-// A top-down open world: a 3600 x 2600 city the camera pans over, shown through a
-// 1280x720 viewport. Nothing here depends on the window size.
+// A 3D open world: a 3600 x 2600 city (x east, z south, y up) the camera
+// follows in third person through a 1280x720 viewport. Nothing here depends
+// on the window size.
 
 export const STEP = 1 / 60;
 
 export const VIEW = { width: 1280, height: 720 };
 
-export const WORLD = { width: 3600, height: 2600 };
+export const WORLD = { width: 3600, depth: 2600 };
 
-/** The city grid: roads run every BLOCK+ROAD px; blocks hold buildings, parks and lots. */
+/** The city grid: roads run every BLOCK+ROAD units; blocks hold buildings, parks and lots. */
 export const CITY = {
   road: 96,
   block: 304,
-  /** Roads are centred on these x / y lines. */
+  /** Roads are centred on these x / z lines. */
   roadsX: [200, 600, 1000, 1400, 1800, 2200, 2600, 3000, 3400],
-  roadsY: [200, 600, 1000, 1400, 1800, 2200],
-  harborY: 2400,
+  roadsZ: [200, 600, 1000, 1400, 1800, 2200],
+  harborZ: 2400,
 };
+
+/** One full day/night cycle, in seconds. The game opens at golden hour. */
+export const DAY_LENGTH = 240;
+export const CLOCK_START = 0;
 
 /** On foot: run speed, health, and the punch/shoot reach. */
 export const PLAYER = {
-  radius: 14,
-  walkSpeed: 230,
-  runSpeed: 320,
+  radius: 3,
+  walkSpeed: 11,
+  runSpeed: 16,
   health: 100,
-  punchRange: 46,
+  armor: 50,
+  punchRange: 3.2,
   punchDamage: 25,
   shootDamage: 34,
   fireInterval: 0.22,
@@ -32,27 +38,34 @@ export const PLAYER = {
   maxAmmo: 120,
 };
 
-/** Cars: parked, traffic and police share one body model. */
+/** Cars: parked, traffic and police share one body model. Length is along the heading. */
 export const CAR = {
-  length: 54,
-  width: 26,
-  accel: 420,
-  brake: 620,
-  reverseAccel: 220,
-  maxSpeed: 520,
-  maxReverse: 160,
-  turnRate: 2.6,
+  length: 7.2,
+  width: 3.4,
+  height: 1.9,
+  accel: 26,
+  brake: 42,
+  reverseAccel: 14,
+  maxSpeed: 38,
+  maxReverse: 11,
+  turnRate: 2.4,
   grip: 3.2,
   health: 100,
 };
 
 export const POLICE = {
-  maxSpeed: 470,
-  accel: 460,
+  maxSpeed: 34,
+  accel: 30,
   bustTime: 1.6,
-  spawnDistance: 700,
+  spawnDistance: 90,
   /** Beyond this distance a cop loses the trail and stops chasing. */
-  loseTrackDistance: 800,
+  loseTrackDistance: 120,
+};
+
+export const HELI = {
+  height: 55,
+  orbitRadius: 60,
+  speed: 0.35,
 };
 
 /** Wanted stars 0-5; each crime adds heat, hiding cools it down. */
@@ -79,7 +92,7 @@ export const MISSIONS = [
     title: '1 — First Wheels',
     goal: 'Steal any parked car (walk up to it, press E) and drive to the paint shop',
     briefing: 'Marina: "You need wheels, Rico. Borrow one. The paint shop on Coral Ave will make it yours."',
-    target: { x: 1400, y: 200, label: 'Paint shop' },
+    target: { x: 1400, z: 200, label: 'Paint shop' },
     kind: 'steal-and-drive',
     reward: 300,
   },
@@ -88,7 +101,7 @@ export const MISSIONS = [
     title: '2 — Pizza Run',
     goal: 'Deliver 3 parcels to the glowing markers before the timer runs out',
     briefing: 'Marina: "Three parcels, three doors, no questions. The clock is already running."',
-    target: { x: 2600, y: 1000, label: 'Delivery' },
+    target: { x: 2600, z: 1000, label: 'Delivery' },
     kind: 'deliver',
     deliveries: 3,
     timeLimit: 150,
@@ -99,7 +112,7 @@ export const MISSIONS = [
     title: '3 — Harbor Heat',
     goal: 'Go to the harbor, deal with the 4 Dock Rats, grab the briefcase, bring it home',
     briefing: 'Marina: "The Rats took my briefcase at the harbor. Get it back. Loud is fine."',
-    target: { x: 1800, y: 2400, label: 'Harbor' },
+    target: { x: 1800, z: 2400, label: 'Harbor' },
     kind: 'fight-and-fetch',
     rivals: 4,
     reward: 800,
@@ -109,7 +122,7 @@ export const MISSIONS = [
     title: '4 — Getaway',
     goal: 'The cops are on you. Lose the heat (3 stars) and reach the hideout',
     briefing: 'Marina: "You tripped every alarm in the city. Lose them, then come home."',
-    target: { x: 600, y: 600, label: 'Hideout' },
+    target: { x: 600, z: 600, label: 'Hideout' },
     kind: 'escape',
     reward: 700,
   },
@@ -118,7 +131,7 @@ export const MISSIONS = [
     title: '5 — The Big Score',
     goal: 'Rob the Neon Bay bank vault, grab the cash, escape to the boat at the harbor',
     briefing: 'Marina: "Last job, Rico. The bank vault, then the boat. After this, you are free."',
-    target: { x: 3000, y: 600, label: 'Bank' },
+    target: { x: 3000, z: 600, label: 'Bank' },
     kind: 'heist',
     reward: 2000,
   },
@@ -126,12 +139,12 @@ export const MISSIONS = [
 
 /** Districts and landmarks, drawn on the map and the minimap. */
 export const DISTRICTS = [
-  { name: 'CORAL AVE', x: 1400, y: 130 },
-  { name: 'PALM ROW', x: 600, y: 530 },
-  { name: 'DOWNTOWN', x: 2200, y: 930 },
-  { name: 'OLD PORT', x: 1000, y: 1930 },
-  { name: 'NEON STRIP', x: 2600, y: 1730 },
-  { name: 'HARBOR', x: 1800, y: 2470 },
+  { name: 'CORAL AVE', x: 1400, z: 130 },
+  { name: 'PALM ROW', x: 600, z: 530 },
+  { name: 'DOWNTOWN', x: 2200, z: 930 },
+  { name: 'OLD PORT', x: 1000, z: 1930 },
+  { name: 'NEON STRIP', x: 2600, z: 1730 },
+  { name: 'HARBOR', x: 1800, z: 2470 },
 ];
 
 export const PALETTE = {

@@ -10,6 +10,7 @@ export const ACTION_SHOOT = 8;
 export const ACTION_PUNCH = 16;
 export const ACTION_RADIO = 32;
 export const ACTION_MUTE = 64;
+export const ACTION_CYCLE_WEAPON = 128;
 
 const UP = new Set(['ArrowUp', 'KeyW']);
 const DOWN = new Set(['ArrowDown', 'KeyS']);
@@ -21,6 +22,7 @@ const ENTER = new Set(['KeyE']);
 const RUN = new Set(['ShiftLeft', 'ShiftRight']);
 const RADIO = new Set(['KeyR']);
 const MUTE = new Set(['KeyM']);
+const CYCLE_WEAPON = new Set(['KeyQ']);
 
 export function createInput(target) {
   const held = { up: false, down: false, left: false, right: false, run: false };
@@ -52,6 +54,8 @@ export function createInput(target) {
       if (!event.repeat) actions |= ACTION_RADIO;
     } else if (MUTE.has(event.code)) {
       if (!event.repeat) actions |= ACTION_MUTE;
+    } else if (CYCLE_WEAPON.has(event.code)) {
+      if (!event.repeat) actions |= ACTION_CYCLE_WEAPON;
     } else return;
     event.preventDefault();
   }

@@ -14,7 +14,7 @@ import {
   createWorld, EVENT_BUSTED, EVENT_MISSION_DONE, EVENT_STORY_DONE, EVENT_WASTED,
 } from './world.js';
 import {
-  ACTION_CONFIRM, ACTION_ENTER, ACTION_MUTE, ACTION_PAUSE, ACTION_RADIO,
+  ACTION_CONFIRM, ACTION_CYCLE_WEAPON, ACTION_ENTER, ACTION_MUTE, ACTION_PAUSE, ACTION_RADIO,
   ACTION_SHOOT, createInput,
 } from './input.js';
 import { createAudio } from './audio.js';
@@ -53,13 +53,30 @@ const hud = {
   missionTitle: $('missionTitle'),
   missionGoal: $('missionGoal'),
   missionTimer: $('missionTimer'),
+  missionStage: $('missionStage'),
   toast: $('toast'),
   hint: $('hint'),
   title: $('title'),
   paused: $('paused'),
   over: $('over'),
   win: $('win'),
-  radioStation: '',
+  district: $('district'),
+  districtName: $('districtName'),
+  districtStand: $('districtStand'),
+  respectFill: $('respectFill'),
+  respectText: $('respectText'),
+  roster: $('roster'),
+  rosterTitle: $('rosterTitle'),
+  rosterList: $('rosterList'),
+  carinfo: $('carinfo'),
+  carName: $('carName'),
+  carStats: $('carStats'),
+  dialog: $('dialog'),
+  dialogFace: $('dialogFace'),
+  dialogName: $('dialogName'),
+  dialogText: $('dialogText'),
+  wheel: $('wheel'),
+  radioStation: 'NEON FM — Synthwave',
 };
 
 function readSave() {
@@ -208,6 +225,7 @@ function runGame() {
     const events = world.step(STEP, {
       axes,
       actions: (actions & ACTION_ENTER ? 4 : 0) | (actions & ACTION_SHOOT || axes.mouseDown ? 8 : 0),
+      weaponCycle: !!(actions & ACTION_CYCLE_WEAPON),
       aimX: aim.x,
       aimZ: aim.z,
       cameraYaw: renderer.cameraYaw(),

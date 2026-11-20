@@ -1,12 +1,15 @@
 // Keyboard and mouse input. Held keys give movement and driving; one-shot
 // presses (confirm, pause, enter car, shoot) are queued as bit flags and taken
 // once by the loop, so a press between two frames is never lost or counted twice.
+// Dragging the mouse orbits the third-person camera; a short click shoots.
 
 export const ACTION_CONFIRM = 1;
 export const ACTION_PAUSE = 2;
 export const ACTION_ENTER = 4;
 export const ACTION_SHOOT = 8;
 export const ACTION_PUNCH = 16;
+export const ACTION_RADIO = 32;
+export const ACTION_MUTE = 64;
 
 const UP = new Set(['ArrowUp', 'KeyW']);
 const DOWN = new Set(['ArrowDown', 'KeyS']);
@@ -16,6 +19,8 @@ const CONFIRM = new Set(['Space', 'Enter']);
 const PAUSE = new Set(['KeyP', 'Escape']);
 const ENTER = new Set(['KeyE']);
 const RUN = new Set(['ShiftLeft', 'ShiftRight']);
+const RADIO = new Set(['KeyR']);
+const MUTE = new Set(['KeyM']);
 
 export function createInput(target) {
   const held = { up: false, down: false, left: false, right: false, run: false };
@@ -23,6 +28,13 @@ export function createInput(target) {
   let mouseX = 0;
   let mouseY = 0;
   let mouseDown = false;
+  // Camera orbit, in radians: yawOffset around the player, pitch above the horizon.
+  let camYawOffset = 0;
+  let camPitch = 0.32;
+  let dragStartX = 0;
+  let dragStartY = 0;
+  let dragging = false;
+  let dragMoved = false;
 
   function keyDown(event) {
     if (UP.has(event.code)) held.up = true;
@@ -36,6 +48,10 @@ export function createInput(target) {
       if (!event.repeat) actions |= ACTION_CONFIRM;
     } else if (PAUSE.has(event.code)) {
       if (!event.repeat) actions |= ACTION_PAUSE;
+    } else if (RADIO.has(event.code)) {
+      if (!event.repeat) actions |= ACTION_RADIO;
+    } else if (MUTE.has(event.code)) {
+      if (!event.repeat) actions |= ACTION_MUTE;
     } else return;
     event.preventDefault();
   }
@@ -55,6 +71,7 @@ export function createInput(target) {
     held.right = false;
     held.run = false;
     mouseDown = false;
+    dragging = false;
   }
 
   window.addEventListener('keydown', keyDown);
@@ -63,15 +80,31 @@ export function createInput(target) {
 
   target.addEventListener('pointerdown', (event) => {
     mouseDown = true;
-    actions |= ACTION_SHOOT | ACTION_CONFIRM;
+    dragging = true;
+    dragMoved = false;
+    dragStartX = event.clientX;
+    dragStartY = event.clientY;
   });
   target.addEventListener('pointerup', () => {
     mouseDown = false;
+    if (dragging && !dragMoved) actions |= ACTION_SHOOT | ACTION_CONFIRM;
+    dragging = false;
   });
   target.addEventListener('pointermove', (event) => {
     const rect = target.getBoundingClientRect();
     mouseX = event.clientX - rect.left;
     mouseY = event.clientY - rect.top;
+    if (dragging) {
+      const dx = event.clientX - dragStartX;
+      const dy = event.clientY - dragStartY;
+      if (Math.abs(dx) + Math.abs(dy) > 8) dragMoved = true;
+      if (dragMoved) {
+        camYawOffset -= dx * 0.005;
+        camPitch = Math.max(0.08, Math.min(1.1, camPitch + dy * 0.003));
+        dragStartX = event.clientX;
+        dragStartY = event.clientY;
+      }
+    }
   });
 
   return {
@@ -91,6 +124,14 @@ export function createInput(target) {
       const taken = actions;
       actions = 0;
       return taken;
+    },
+    /** The camera orbit the player set by dragging. */
+    cameraOrbit() {
+      return { yawOffset: camYawOffset, pitch: camPitch };
+    },
+    setCameraOrbit(yawOffset, pitch) {
+      camYawOffset = yawOffset;
+      camPitch = pitch;
     },
     releaseAll,
   };

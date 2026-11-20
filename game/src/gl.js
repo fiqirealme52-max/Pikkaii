@@ -4,6 +4,12 @@
 // quads and cylinders into triangle soup with per-face normals. Dynamic things
 // (cars, people, the helicopter) are meshes drawn with a model matrix; the
 // whole city is baked into two static meshes at load time.
+//
+// The 32-bit pass (see RETRO in config.js) renders the scene into a
+// low-resolution framebuffer and upscales it with nearest-neighbour
+// filtering, 15-bit colour and ordered dithering — the PS1 look.
+
+import { RETRO } from './config.js';
 
 const VERTEX_SHADER = `
 attribute vec3 aPos;
@@ -15,6 +21,7 @@ uniform mat4 uModel;
 uniform vec3 uCamPos;
 uniform float uWave;
 uniform float uTime;
+uniform vec2 uSnap;
 varying vec3 vColor;
 varying vec3 vNormal;
 varying float vFog;
@@ -28,7 +35,19 @@ void main() {
   vColor = aColor;
   vFog = distance(world.xyz, uCamPos);
   vSky = clamp(vNormal.y * 0.7 + 0.5, 0.0, 1.0);
-  gl_Position = uProj * uView * world;
+  vec4 clip = uProj * uView * world;
+  // PS1-style vertex snap: quantise the projected position to the
+  // low-resolution pixel grid, so vertices wobble as the camera moves
+  // instead of gliding smoothly. Snapping is per-vertex, so triangles
+  // that share a vertex snap together and the mesh does not tear.
+  if (uSnap.x > 0.0 && clip.w > 0.0) {
+    vec4 ndc = clip;
+    ndc.xyz /= ndc.w;
+    ndc.xy = (floor(ndc.xy * uSnap) + 0.5) / uSnap;
+    ndc.xyz *= ndc.w;
+    clip = ndc;
+  }
+  gl_Position = clip;
 }
 `;
 
@@ -57,6 +76,18 @@ void main() {
   vec3 color;
   if (uSky > 0.5) {
     color = mix(uSkyBottom, uSkyTop, vSky);
+    // Sun disc + warm halo (the dome normal is the view direction here),
+    // fading out as night falls.
+    float nightF = clamp((uEmissiveStrength - 0.15) / 0.85, 0.0, 1.0);
+    float sunAmt = max(dot(normalize(vNormal), normalize(uSunDir)), 0.0);
+    color += vec3(1.0, 0.75, 0.4) * (pow(sunAmt, 220.0) * 2.0 + pow(sunAmt, 8.0) * 0.5) * (1.0 - nightF);
+    // Procedural stars, only visible at night.
+    vec3 cell = floor(normalize(vNormal) * 220.0);
+    float h = fract(sin(dot(cell, vec3(12.9898, 78.233, 45.164))) * 43758.5453);
+    color += vec3(0.9, 0.95, 1.0) * step(0.9985, h) * nightF * 0.85;
+    // Warm haze hugging the horizon at dusk and dawn.
+    float haze = 1.0 - smoothstep(0.0, 0.12, abs(vSky - 0.5));
+    color = mix(color, vec3(1.0, 0.55, 0.35), haze * 0.22 * (1.0 - nightF));
   } else if (uUnlit > 0.5) {
     color = vColor * uTint;
   } else {
@@ -70,6 +101,43 @@ void main() {
     color = mix(color, uFogColor, f);
   }
   gl_FragColor = vec4(color, uAlpha);
+}
+`;
+
+/**
+ * The upscale pass: a fullscreen triangle that samples the low-resolution
+ * framebuffer. The texture is NEAREST-filtered, so one low-res pixel
+ * becomes a chunky block on screen; colours are quantised to 15-bit
+ * (32 levels a channel, PS1's palette) with an ordered 2x2 Bayer dither
+ * so gradients band the way they did on 32-bit hardware instead of
+ * posterising into hard steps.
+ */
+const BLIT_VERTEX_SHADER = `
+attribute vec2 aP;
+varying vec2 vUv;
+void main() {
+  vUv = aP * 0.5 + 0.5;
+  gl_Position = vec4(aP, 0.0, 1.0);
+}
+`;
+
+const BLIT_FRAGMENT_SHADER = `
+precision mediump float;
+uniform sampler2D uTex;
+uniform float uLevels;
+uniform float uDither;
+varying vec2 vUv;
+void main() {
+  vec3 c = texture2D(uTex, vUv).rgb;
+  if (uDither > 0.5) {
+    // 2x2 Bayer: (0,0)->0, (1,0)->2, (0,1)->3, (1,1)->1, over 4.
+    vec2 q = mod(gl_FragCoord.xy, 2.0);
+    float b = (q.x * 2.0 + q.y * 3.0 - q.x * q.y * 4.0) / 4.0;
+    c = floor(c * uLevels + b) / uLevels;
+  } else {
+    c = floor(c * uLevels + 0.5) / uLevels;
+  }
+  gl_FragColor = vec4(c, 1.0);
 }
 `;
 
@@ -337,7 +405,7 @@ export function createGLRenderer(canvas) {
 
   const loc = {};
   for (const name of [
-    'aPos', 'aNormal', 'aColor', 'uProj', 'uView', 'uModel', 'uCamPos', 'uWave', 'uTime',
+    'aPos', 'aNormal', 'aColor', 'uProj', 'uView', 'uModel', 'uCamPos', 'uWave', 'uTime', 'uSnap',
     'uSunDir', 'uSunColor', 'uAmbient', 'uFogColor', 'uFogNear', 'uFogFar',
     'uEmissive', 'uEmissiveStrength', 'uTint', 'uUnlit', 'uNoFog', 'uSky',
     'uSkyTop', 'uSkyBottom', 'uAlpha',
@@ -370,9 +438,109 @@ export function createGLRenderer(canvas) {
     time: 0,
   };
 
+  // --- The 32-bit retro pass -------------------------------------------
+  // A low-resolution framebuffer (colour texture + depth renderbuffer) and
+  // a second program that blits it to the screen. The scene is drawn into
+  // the framebuffer between beginRetro() and endRetro(); the blit upscales
+  // with NEAREST filtering and quantises the colour. The DOM HUD is drawn
+  // by the browser afterwards, so it stays crisp.
+  const retroOn = RETRO.enabled !== false;
+  let retroFbo = null;
+  let retroTex = null;
+  let retroDepth = null;
+  let retroW = 0;
+  let retroH = 0;
+  let canvasW = 0;
+  let canvasH = 0;
+  const blitProgram = gl.createProgram();
+  gl.attachShader(blitProgram, compileShader(gl, gl.VERTEX_SHADER, BLIT_VERTEX_SHADER));
+  gl.attachShader(blitProgram, compileShader(gl, gl.FRAGMENT_SHADER, BLIT_FRAGMENT_SHADER));
+  gl.linkProgram(blitProgram);
+  if (!gl.getProgramParameter(blitProgram, gl.LINK_STATUS)) {
+    throw new Error(`blit program link failed: ${gl.getProgramInfoLog(blitProgram)}`);
+  }
+  const blitLoc = {
+    aP: gl.getAttribLocation(blitProgram, 'aP'),
+    uTex: gl.getUniformLocation(blitProgram, 'uTex'),
+    uLevels: gl.getUniformLocation(blitProgram, 'uLevels'),
+    uDither: gl.getUniformLocation(blitProgram, 'uDither'),
+  };
+  const blitBuffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, blitBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+
+  /** (Re)build the low-res target for the current canvas aspect. */
+  function setupRetro() {
+    const aspect = canvasW / Math.max(1, canvasH);
+    const w = Math.max(160, RETRO.width || 320);
+    const h = Math.max(1, Math.round(w / aspect));
+    if (w === retroW && h === retroH && retroFbo) return;
+    retroW = w;
+    retroH = h;
+    if (retroFbo) {
+      gl.deleteFramebuffer(retroFbo);
+      gl.deleteTexture(retroTex);
+      gl.deleteRenderbuffer(retroDepth);
+    }
+    retroTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, retroTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    retroDepth = gl.createRenderbuffer();
+    gl.bindRenderbuffer(gl.RENDERBUFFER, retroDepth);
+    gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, w, h);
+    retroFbo = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, retroFbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, retroTex, 0);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, retroDepth);
+    if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+      throw new Error('retro framebuffer is not complete');
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  }
+
+  /** Bind the low-res target before the scene is drawn (no-op if off). */
+  function beginRetro() {
+    if (!retroOn) {
+      gl.viewport(0, 0, canvasW, canvasH);
+      return;
+    }
+    setupRetro();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, retroFbo);
+    gl.viewport(0, 0, retroW, retroH);
+  }
+
+  /** Blit the low-res target to the screen (no-op if off). */
+  function endRetro() {
+    if (!retroOn) return;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, canvasW, canvasH);
+    gl.useProgram(blitProgram);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, retroTex);
+    gl.uniform1i(blitLoc.uTex, 0);
+    gl.uniform1f(blitLoc.uLevels, RETRO.levels || 32);
+    gl.uniform1f(blitLoc.uDither, RETRO.dither ? 1 : 0);
+    gl.disable(gl.DEPTH_TEST);
+    gl.disable(gl.CULL_FACE);
+    gl.bindBuffer(gl.ARRAY_BUFFER, blitBuffer);
+    gl.enableVertexAttribArray(blitLoc.aP);
+    gl.vertexAttribPointer(blitLoc.aP, 2, gl.FLOAT, false, 0, 0);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.disableVertexAttribArray(blitLoc.aP);
+    gl.enable(gl.DEPTH_TEST);
+    gl.enable(gl.CULL_FACE);
+    gl.useProgram(program);
+  }
+
   function resize(width, height) {
     canvas.width = width;
     canvas.height = height;
+    canvasW = width;
+    canvasH = height;
     gl.viewport(0, 0, width, height);
   }
 
@@ -398,6 +566,9 @@ export function createGLRenderer(canvas) {
     gl.uniform3fv(loc.uSkyTop, state.skyTop);
     gl.uniform3fv(loc.uSkyBottom, state.skyBottom);
     gl.uniform1f(loc.uTime, state.time);
+    // Snap grid in NDC units: half the low-res width/height, so vertices
+    // land on the low-res pixel grid. Zero disables the wobble.
+    gl.uniform2f(loc.uSnap, retroOn ? retroW / 2 : 0, retroOn ? retroH / 2 : 0);
   }
 
   function clear(skyColor) {
@@ -455,7 +626,9 @@ export function createGLRenderer(canvas) {
 
   return {
     gl, resize, setCamera, setEnvironment, applyEnvironment, clear,
-    createMesh, createMeshFromData, drawMesh,
+    createMesh, createMeshFromData, drawMesh, beginRetro, endRetro,
+    /** The 32-bit pass's internal resolution, for debugging and probes. */
+    get retroSize() { return { enabled: retroOn, width: retroW, height: retroH }; },
     /** The current frame's environment, for the sky dome and the HUD. */
     get env() { return state; },
   };

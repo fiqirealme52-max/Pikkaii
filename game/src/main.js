@@ -5,15 +5,18 @@
 // mission, every twenty seconds and every pause, and offered back as Continue.
 //
 // ?seed=N fixes the city and the traffic. ?shot=start|drive|chase|mission (with
-// &seed=N) stages that scene instead of running the loop, paints it twice and
-// sets window.__shotReady for a screenshot.
+// &seed=N) stages that scene instead of running the loop, paints it until the
+// camera settles, and sets window.__shotReady for a screenshot.
 
-import { BEST_KEY, SAVE_KEY, STEP, VIEW } from './config.js';
+import { BEST_KEY, SAVE_KEY, STEP } from './config.js';
 import { createRandom } from './random.js';
 import {
   createWorld, EVENT_BUSTED, EVENT_MISSION_DONE, EVENT_STORY_DONE, EVENT_WASTED,
 } from './world.js';
-import { ACTION_CONFIRM, ACTION_ENTER, ACTION_PAUSE, ACTION_SHOOT, createInput } from './input.js';
+import {
+  ACTION_CONFIRM, ACTION_ENTER, ACTION_MUTE, ACTION_PAUSE, ACTION_RADIO,
+  ACTION_SHOOT, createInput,
+} from './input.js';
 import { createAudio } from './audio.js';
 import { createRenderer, SCREEN_OVER, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_TITLE, SCREEN_WIN } from './render.js';
 import { stageShot } from './shots.js';
@@ -29,6 +32,35 @@ const seed = Number.isInteger(seedParam) ? seedParam : Math.floor(Math.random() 
 const canvas = document.getElementById('game');
 const status = document.getElementById('status');
 const audio = createAudio();
+
+function $(id) {
+  return document.getElementById(id);
+}
+
+const hud = {
+  money: $('money'),
+  healthFill: $('healthFill'),
+  armorFill: $('armorFill'),
+  ammo: $('ammo'),
+  stars: $('stars'),
+  speed: $('speed'),
+  clock: $('clock'),
+  radio: $('radio'),
+  bust: $('bust'),
+  bustFill: $('bustFill'),
+  minimap: $('minimap'),
+  mission: $('mission'),
+  missionTitle: $('missionTitle'),
+  missionGoal: $('missionGoal'),
+  missionTimer: $('missionTimer'),
+  toast: $('toast'),
+  hint: $('hint'),
+  title: $('title'),
+  paused: $('paused'),
+  over: $('over'),
+  win: $('win'),
+  radioStation: '',
+};
 
 function readSave() {
   try {
@@ -73,15 +105,21 @@ function saveBest(value) {
 
 const saved = readSave();
 const world = createWorld(createRandom(seed), saved);
-const renderer = createRenderer(canvas);
+const renderer = createRenderer(canvas, hud);
 
 function runShot(name) {
   const scene = stageShot(name, world);
+  // Expose the staged world for inspection (screenshots, debugging).
+  window.__shotWorld = world;
+  window.__shotScene = scene;
   let painted = 0;
+  // Paint enough frames for the chase camera to settle behind the player
+  // (its yaw and distance smooth a little every frame) before the shot.
+  const PAINT_FRAMES = 40;
   function paint() {
     renderer.draw(world.state, scene.screen, scene.best);
     painted += 1;
-    if (painted < 2) requestAnimationFrame(paint);
+    if (painted < PAINT_FRAMES) requestAnimationFrame(paint);
     else window.__shotReady = true;
   }
   requestAnimationFrame(paint);
@@ -95,6 +133,7 @@ function runGame() {
   let last = performance.now();
   let saveTimer = 0;
   let lastScreen = SCREEN_TITLE;
+  let radioMuted = false;
 
   function announce(message) {
     status.textContent = message;
@@ -111,6 +150,8 @@ function runGame() {
     saveTimer = 0;
     screen = SCREEN_PLAY;
     audio.unlock();
+    audio.radioOn();
+    hud.radioStation = audio.stationName();
     announce(`Playing Neon Bay. Mission: ${world.currentMission()?.title ?? 'Free roam'}.`);
   }
 
@@ -126,6 +167,16 @@ function runGame() {
 
   function handleActions() {
     const actions = input.takeActions();
+    if (actions & ACTION_RADIO) {
+      hud.radioStation = audio.nextStation();
+      world.state.message = hud.radioStation;
+      world.state.messageTimer = 2;
+    }
+    if (actions & ACTION_MUTE) {
+      radioMuted = audio.toggleRadio();
+      world.state.message = radioMuted ? 'Radio off' : audio.stationName();
+      world.state.messageTimer = 2;
+    }
     if (actions & ACTION_CONFIRM) {
       audio.unlock();
       if (screen === SCREEN_TITLE) startGame(false);
@@ -145,31 +196,22 @@ function runGame() {
     return actions;
   }
 
-  /** The mouse aim in world coordinates, from the pointer's screen position. */
-  function aimWorld() {
-    const axes = input.axes();
-    const ratio = window.devicePixelRatio || 1;
-    const view = renderer.view;
-    const camX = world.state.camera.x - VIEW.width / 2;
-    const camY = world.state.camera.y - VIEW.height / 2;
-    return {
-      x: (axes.mouseX * ratio - view.x) / view.scale + camX,
-      y: (axes.mouseY * ratio - view.y) / view.scale + camY,
-    };
-  }
-
   function step(actions) {
     if (screen === SCREEN_TITLE) {
-      world.step(STEP, { axes: { x: 0, y: 0, run: false }, actions: 0, aimX: 640, aimY: 360 }, audio);
+      world.state.orbit = input.cameraOrbit();
+      world.step(STEP, { axes: { x: 0, y: 0, run: false }, actions: 0, aimX: 640, aimZ: 360, cameraYaw: 0 }, audio);
       return;
     }
     const axes = input.axes();
-    const aim = aimWorld();
+    const aim = renderer.aimPoint(axes.mouseX, axes.mouseY) || { x: 0, z: 0 };
+    world.state.orbit = input.cameraOrbit();
     const events = world.step(STEP, {
       axes,
       actions: (actions & ACTION_ENTER ? 4 : 0) | (actions & ACTION_SHOOT || axes.mouseDown ? 8 : 0),
       aimX: aim.x,
-      aimY: aim.y,
+      aimZ: aim.z,
+      cameraYaw: renderer.cameraYaw(),
+      mouseDown: axes.mouseDown,
     }, audio);
     if (events & EVENT_MISSION_DONE) {
       writeSave(world);
@@ -193,8 +235,13 @@ function runGame() {
     last = now;
     const actions = handleActions();
     if (screen === SCREEN_TITLE || screen === SCREEN_PLAY) {
+      // One-shot presses belong to the first step of the frame only: at low
+      // frame rates a frame runs many steps, and re-feeding E would enter a
+      // car and exit it again in the same frame.
+      let firstStep = true;
       while (accumulator >= STEP && (screen === SCREEN_TITLE || screen === SCREEN_PLAY)) {
-        step(actions);
+        step(firstStep ? actions : 0);
+        firstStep = false;
         accumulator -= STEP;
       }
     } else {
@@ -214,6 +261,14 @@ function runGame() {
       announce('Paused.');
     }
   });
+
+  // A handle for automated playtests: the world, the screen and the renderer.
+  window.__game = {
+    world,
+    get screen() { return screen; },
+    renderer,
+    startGame,
+  };
 
   announce(saved && saved.missionIndex > 0
     ? `Neon Bay. Welcome back — mission ${saved.missionIndex + 1} of 5, $${saved.money}. Press Space or click to continue.`

@@ -60,19 +60,35 @@ export function trafficLightColor(ix, iz, time, axis) {
 
 function addPalm(builder, x, z, height) {
   const h = height || 13;
-  builder.cylinder(x, h / 2, z, 0.9, h, '#6b4a2f', 6);
+  // Tapered trunk, leaning very slightly, so it reads as a palm, not a pole.
+  builder.cylinderTapered(x, h / 2, z, 0.55, 1.1, h, '#6b4a2f', 6);
   const top = h;
-  for (let i = 0; i < 6; i += 1) {
-    const a = (i / 6) * Math.PI * 2;
-    const outward = [Math.cos(a), -0.45, Math.sin(a)];
+  // Upper tier: 5 fronds arcing up and out.
+  for (let i = 0; i < 5; i += 1) {
+    const a = (i / 5) * Math.PI * 2 + 0.3;
+    const outward = [Math.cos(a), 0.28, Math.sin(a)];
     const side = [-Math.sin(a), 0, Math.cos(a)];
     const up = [0, 1, 0];
     builder.boxBasis(
-      x + Math.cos(a) * 4.5, top - 1.2, z + Math.sin(a) * 4.5,
-      outward, side, up, 5, 1.4, 0.25, '#4e8f3e',
+      x + Math.cos(a) * 4.2, top + 0.6, z + Math.sin(a) * 4.2,
+      outward, side, up, 4.6, 1.5, 0.22, '#4e8f3e',
     );
   }
-  builder.box(x, top + 0.4, z, 3.4, 1.2, 3.4, '#3d7a33');
+  // Lower tier: 4 fronds drooping down, for the full palm silhouette.
+  for (let i = 0; i < 4; i += 1) {
+    const a = (i / 4) * Math.PI * 2 + 0.9;
+    const outward = [Math.cos(a), -0.62, Math.sin(a)];
+    const side = [-Math.sin(a), 0, Math.cos(a)];
+    const up = [0, 1, 0];
+    builder.boxBasis(
+      x + Math.cos(a) * 3.8, top - 1.4, z + Math.sin(a) * 3.8,
+      outward, side, up, 4.2, 1.3, 0.2, '#3d7a33',
+    );
+  }
+  // Crown and a pair of coconuts.
+  builder.box(x, top + 0.4, z, 3.2, 1.1, 3.2, '#3d7a33');
+  builder.box(x + 1.1, top - 0.7, z + 0.6, 0.9, 0.9, 0.9, '#7a5a2e');
+  builder.box(x - 1.0, top - 0.7, z - 0.7, 0.9, 0.9, 0.9, '#7a5a2e');
 }
 
 export function buildCity(random) {
@@ -213,32 +229,54 @@ function buildCityMeshes(city, random) {
     }
   }
 
-  // Buildings: a box per building, windows as emissive quads on its faces,
-  // and a neon sign on some of them, facing the nearest road.
+  // Buildings: an articulated box per building — plinth, cornice, varied
+  // windows (some lit warm, some lit cool, some dark glass), a storefront
+  // with an awning on the street side, and neon on the taller ones, so no
+  // facade reads as a plain coloured slab.
+  const WIN_LIT = ['#ffd98a', '#fff2b0', '#ffb08a', '#bfe8ff', '#ff9ecf'];
   for (const bd of city.buildings) {
     const cx = bd.x + bd.width / 2;
     const cz = bd.z + bd.depth / 2;
     const h = 10 + bd.floors * 7;
     b.box(cx, h / 2, cz, bd.width, h, bd.depth, bd.color, { top: bd.roof });
+    // Darker plinth at the base and a cornice lip at the top.
+    b.box(cx, 1.5, cz, bd.width + 1.5, 3, bd.depth + 1.5, '#2c303a');
+    b.box(cx, h - 0.8, cz, bd.width + 2, 1.8, bd.depth + 2, bd.roof);
     const floors = bd.floors;
-    const winColor = '#ffd98a';
     const stepX = 22;
     const stepY = 7;
+    // One window: lit (a warm, cool or pink glow quad) or dark glass.
+    const putWindow = (a, bb, c, d) => {
+      if (random() < 0.62) {
+        g.quad(a, bb, c, d, randomPick(random, WIN_LIT));
+      } else {
+        b.quad(a, bb, c, d, '#232c3d');
+      }
+    };
     for (let fy = 0; fy < floors; fy += 1) {
       const wy = 6 + fy * stepY;
       for (let wx = bd.x + 12; wx < bd.x + bd.width - 8; wx += stepX) {
         // South face (+z) and north face (-z).
-        g.quad([wx, wy, cz + bd.depth / 2 + 0.15], [wx + 9, wy, cz + bd.depth / 2 + 0.15],
-          [wx + 9, wy + 4.5, cz + bd.depth / 2 + 0.15], [wx, wy + 4.5, cz + bd.depth / 2 + 0.15], winColor);
-        g.quad([wx + 9, wy, cz - bd.depth / 2 - 0.15], [wx, wy, cz - bd.depth / 2 - 0.15],
-          [wx, wy + 4.5, cz - bd.depth / 2 - 0.15], [wx + 9, wy + 4.5, cz - bd.depth / 2 - 0.15], winColor);
+        putWindow([wx, wy, cz + bd.depth / 2 + 0.15], [wx + 9, wy, cz + bd.depth / 2 + 0.15],
+          [wx + 9, wy + 4.5, cz + bd.depth / 2 + 0.15], [wx, wy + 4.5, cz + bd.depth / 2 + 0.15]);
+        putWindow([wx + 9, wy, cz - bd.depth / 2 - 0.15], [wx, wy, cz - bd.depth / 2 - 0.15],
+          [wx, wy + 4.5, cz - bd.depth / 2 - 0.15], [wx + 9, wy + 4.5, cz - bd.depth / 2 - 0.15]);
       }
       for (let wz = bd.z + 12; wz < bd.z + bd.depth - 8; wz += stepX) {
-        g.quad([cx + bd.width / 2 + 0.15, wy, wz], [cx + bd.width / 2 + 0.15, wy, wz + 9],
-          [cx + bd.width / 2 + 0.15, wy + 4.5, wz + 9], [cx + bd.width / 2 + 0.15, wy + 4.5, wz], winColor);
-        g.quad([cx - bd.width / 2 - 0.15, wy, wz + 9], [cx - bd.width / 2 - 0.15, wy, wz],
-          [cx - bd.width / 2 - 0.15, wy + 4.5, wz], [cx - bd.width / 2 - 0.15, wy + 4.5, wz + 9], winColor);
+        putWindow([cx + bd.width / 2 + 0.15, wy, wz], [cx + bd.width / 2 + 0.15, wy, wz + 9],
+          [cx + bd.width / 2 + 0.15, wy + 4.5, wz + 9], [cx + bd.width / 2 + 0.15, wy + 4.5, wz]);
+        putWindow([cx - bd.width / 2 - 0.15, wy, wz + 9], [cx - bd.width / 2 - 0.15, wy, wz],
+          [cx - bd.width / 2 - 0.15, wy + 4.5, wz], [cx - bd.width / 2 - 0.15, wy + 4.5, wz + 9]);
       }
+    }
+    // A storefront on the south side: dark glass band, a coloured awning
+    // and a small sign, so the street level reads as shops, not a blank wall.
+    if (random() < 0.55) {
+      const awn = randomPick(random, ['#ff4d9d', '#37e0d8', '#ffd23e', '#ff6b35']);
+      b.quad([bd.x + 6, 1.2, cz + bd.depth / 2 + 0.15], [bd.x + bd.width - 6, 1.2, cz + bd.depth / 2 + 0.15],
+        [bd.x + bd.width - 6, 5.4, cz + bd.depth / 2 + 0.15], [bd.x + 6, 5.4, cz + bd.depth / 2 + 0.15], '#1d2b3a');
+      b.box(cx, 5.9, cz + bd.depth / 2 + 1.6, bd.width * 0.7, 0.5, 3.2, awn);
+      g.box(cx, 7.6, cz + bd.depth / 2 + 0.4, Math.min(30, bd.width * 0.4), 1.6, 0.7, awn);
     }
     // A neon sign strip on the taller buildings, facing the street.
     if (bd.floors >= 3 && random() < 0.6) {
@@ -248,10 +286,28 @@ function buildCityMeshes(city, random) {
       g.box(cx, signY, cz + bd.depth / 2 + 0.4, signW, 2.2, 0.8, neon);
       g.box(cx, signY - 4, cz + bd.depth / 2 + 0.4, signW * 0.6, 1.2, 0.8, neon);
     }
-    // Rooftop box (AC unit / water tank) so skylines are not flat slabs.
+    // Vertical neon strips down the front corners of the tallest buildings.
+    if (bd.floors >= 4 && random() < 0.5) {
+      const neon = randomPick(random, NEON_COLORS);
+      for (const sx of [-1, 1]) {
+        g.box(cx + sx * (bd.width / 2 - 2), h / 2, cz + bd.depth / 2 + 0.35, 1.1, h - 6, 0.7, neon);
+      }
+    }
+    // Rooftop clutter so skylines are not flat slabs: AC boxes, water towers
+    // and antenna masts.
     if (random() < 0.7) {
       b.box(cx + (random() - 0.5) * bd.width * 0.4, h + 1.5, cz + (random() - 0.5) * bd.depth * 0.4,
         8 + random() * 8, 3, 8 + random() * 8, '#3a3f4a');
+    }
+    if (bd.floors >= 3 && random() < 0.35) {
+      const tx = cx + (random() - 0.5) * bd.width * 0.5;
+      const tz = cz + (random() - 0.5) * bd.depth * 0.5;
+      b.cylinder(tx, h + 4, tz, 3.2, 5, '#6b4a2f', 8);
+      b.cylinderTapered(tx, h + 8, tz, 0.4, 3.6, 2.6, '#3a3f4a', 8);
+    }
+    if (random() < 0.3) {
+      b.cylinder(cx + (random() - 0.5) * bd.width * 0.5, h + 6, cz + (random() - 0.5) * bd.depth * 0.5,
+        0.35, 12, '#2c303a', 6);
     }
   }
 
@@ -275,10 +331,74 @@ function buildCityMeshes(city, random) {
     }
   }
 
+  // Street props: zebra crossings at every intersection, hydrants, benches
+  // and bus-stop shelters on the main avenue — the streets should feel used.
+  for (let ix = 0; ix < CITY.roadsX.length; ix += 1) {
+    for (let iz = 0; iz < CITY.roadsZ.length; iz += 1) {
+      const rx = CITY.roadsX[ix];
+      const rz = CITY.roadsZ[iz];
+      for (let s = -1; s <= 1; s += 2) {
+        for (let stripe = 0; stripe < 5; stripe += 1) {
+          const sx = rx - 9 + stripe * 4.5;
+          b.groundQuad(sx, rz + s * (CITY.road / 2 - 3), sx + 2.4, rz + s * (CITY.road / 2 + 3), 0.09, '#e8e4da');
+        }
+        for (let stripe = 0; stripe < 5; stripe += 1) {
+          const sz = rz - 9 + stripe * 4.5;
+          b.groundQuad(rx + s * (CITY.road / 2 - 3), sz, rx + s * (CITY.road / 2 + 3), sz + 2.4, 0.09, '#e8e4da');
+        }
+      }
+      if (random() < 0.5) {
+        const hx = rx + CITY.road / 2 + 8;
+        const hz = rz + CITY.road / 2 + 8;
+        b.cylinder(hx, 0.9, hz, 0.8, 1.8, '#d9382b', 6);
+        b.cylinder(hx, 1.9, hz, 0.5, 0.4, '#f2c94c', 6);
+      }
+    }
+  }
+  for (let x = 400; x < WORLD.width - 200; x += 260) {
+    // Benches on the main-avenue sidewalk, some with a bus-stop shelter.
+    b.box(x, 0.8, 147, 7, 0.35, 2.2, '#8a6f5c');
+    b.box(x, 1.6, 146.2, 7, 1.6, 0.35, '#8a6f5c');
+    b.box(x - 3, 0.4, 147, 0.5, 0.8, 2, '#2c303a');
+    b.box(x + 3, 0.4, 147, 0.5, 0.8, 2, '#2c303a');
+    if (random() < 0.5) {
+      b.box(x, 6.4, 144, 10, 0.4, 5, '#37e0d8');
+      b.cylinder(x - 4.5, 3.2, 144, 0.3, 6.4, '#2c303a', 6);
+      b.cylinder(x + 4.5, 3.2, 144, 0.3, 6.4, '#2c303a', 6);
+    }
+  }
+
+  // Harbor water detail: foam strips where the waves meet the sand, and
+  // moonlight sparkle quads drifting on the water (glow mesh, so they shine).
+  for (let x = 0; x < WORLD.width; x += 90) {
+    w.groundQuad(x, CITY.harborZ, x + 55, CITY.harborZ + 14, -0.3, '#cfeef5');
+  }
+  for (let i = 0; i < 48; i += 1) {
+    const sx = 60 + random() * (WORLD.width - 120);
+    const sz = CITY.harborZ + 30 + random() * (WORLD.depth - CITY.harborZ - 60);
+    g.groundQuad(sx, sz, sx + 6, sz + 3, -0.4, randomPick(random, ['#fff2b0', '#bfe8ff', '#ffffff']));
+  }
+  // Beach umbrellas on the sand, south of the waterline.
+  const UMB_COLORS = ['#ff4d9d', '#ffd23e', '#37e0d8', '#ff6b35'];
+  for (let x = 300; x < WORLD.width - 200; x += 480) {
+    const ux = x + random() * 120;
+    const uz = CITY.harborZ - 14 + random() * 6;
+    b.cylinder(ux, 3, uz, 0.25, 6, '#e8e4da', 6);
+    b.cylinderTapered(ux, 6.6, uz, 0.3, 7, 1.8, randomPick(random, UMB_COLORS), 8);
+  }
+
   // The harbor pier and the getaway boat, waiting at the south edge.
-  p.box(1805, 0.8, CITY.harborZ + 30, 90, 1.6, 60, '#8a6f5c');
+  // The deck is a warm light wood so it still reads as timber at dusk,
+  // instead of a dark slab.
+  p.box(1805, 0.8, CITY.harborZ + 30, 90, 1.6, 60, '#b08a68');
   for (let z = CITY.harborZ + 6; z < CITY.harborZ + 56; z += 8) {
-    p.box(1805, 1.7, z, 90, 0.3, 2, '#a8836b');
+    p.box(1805, 1.7, z, 90, 0.3, 2, '#c9a06a');
+  }
+  // Pier posts under the deck, down into the water.
+  for (let px = 1768; px <= 1842; px += 18) {
+    for (let pz = CITY.harborZ + 8; pz <= CITY.harborZ + 54; pz += 22) {
+      p.cylinder(px, -0.4, pz, 1, 2.4, '#5c4a34', 6);
+    }
   }
   p.box(1805, 2.2, CITY.harborZ + 58, 14, 2.4, 34, '#f2f5f7'); // hull
   p.box(1805, 4.6, CITY.harborZ + 52, 9, 2.6, 12, '#37e0d8'); // cabin

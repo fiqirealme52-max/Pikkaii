@@ -3,7 +3,11 @@
 // helicopter, beacons); the HUD, the minimap and the menus are DOM on top.
 // The camera chases the player in third person and smooths behind them.
 
-import { CAR, CITY, DISTRICTS, MISSIONS, PALETTE, PLAYER, VIEW, WORLD } from './config.js';
+import { CAR, CITY, DISTRICTS, MISSIONS, PALETTE, PLAYER, RESPECT, VIEW, WORLD } from './config.js';
+import {
+  CREW, RADIO_TRACKS, WEAPONS, carModelName, districtAt, missionCard,
+  policeRoster, respectRank, standingLabel,
+} from './systems.js';
 import { dayNight } from './world.js';
 import {
   MeshBuilder, createGLRenderer, hexRgb,
@@ -474,38 +478,46 @@ export function createRenderer(canvas, hud) {
     minimap.fillText('NEON BAY', m.width / 2, m.height - 5);
   }
 
+  // Cached panel strings: rebuilding innerHTML every frame is wasteful and
+  // makes the HUD flicker; only rewrite a panel when its text changes.
+  let lastRoster = '';
+  let lastWheel = '';
+  let lastDialog = '';
+
   function drawHud(state, screen, best) {
     const player = state.player;
     const mission = MISSIONS[state.mission.index] || null;
     const env = dayNight(state.clock);
     const pad = (n) => String(n).padStart(2, '0');
     const icon = env.night > 0.6 ? '🌙' : env.dusk > 0.3 ? '🌇' : '☀️';
-    hud.clock.textContent = `${icon} ${pad(env.hour)}:${pad(env.minute)}`;
+    hud.clock.textContent = `DAY ${state.day} ${icon} ${pad(env.hour)}:${pad(env.minute)}`;
     hud.money.textContent = `$${player.money}`;
     hud.healthFill.style.width = `${clamp(player.health, 0, 100)}%`;
     hud.healthFill.style.background = player.health > 30 ? '#7ee081' : '#ff5a5a';
     hud.armorFill.style.width = `${clamp(player.armor, 0, 100)}%`;
-    hud.ammo.textContent = `AMMO ${player.ammo}`;
+    hud.ammo.textContent = player.weapon === 0 ? 'FISTS' : `AMMO ${player.ammo}`;
     hud.stars.textContent = '★'.repeat(player.wanted) + '☆'.repeat(5 - player.wanted);
     hud.stars.style.color = player.wanted > 0 ? PALETTE.star : '#3a3f4a';
     hud.speed.textContent = player.inCar
       ? `${Math.round(Math.abs(player.inCar.speed) * 3.6)} km/h`
       : 'ON FOOT';
-    hud.radio.textContent = hud.radioStation || '';
+    // Radio: station plus the track playing (a new track every 30 seconds).
+    const tracks = RADIO_TRACKS[hud.radioStation] || [];
+    const track = tracks.length ? tracks[Math.floor(state.time / 30) % tracks.length] : '';
+    hud.radio.textContent = hud.radioStation ? `${hud.radioStation}${track ? ` ♪ ${track}` : ''}` : '';
     if (player.bustTimer > 0) {
       hud.bust.style.display = 'block';
       hud.bustFill.style.width = `${clamp(player.bustTimer / 1.6, 0, 1) * 100}%`;
     } else {
       hud.bust.style.display = 'none';
     }
-    if (mission && !state.storyDone) {
+    const card = missionCard(state, mission);
+    if (card) {
       hud.mission.style.display = 'block';
-      hud.missionTitle.textContent = mission.title;
+      hud.missionTitle.textContent = `${mission.title} · ${card.chapter}`;
+      hud.missionStage.textContent = `${card.stage} — ${card.stageLabel}`;
       hud.missionGoal.textContent = mission.goal;
-      let timer = '';
-      if (mission.kind === 'deliver' && state.mission) timer = `TIME ${Math.max(0, Math.ceil(state.mission.timer))}s`;
-      if (mission.kind === 'heist' && state.mission && state.mission.stage === 'vault') timer = `VAULT ${Math.max(0, Math.ceil(state.mission.vaultTimer))}s`;
-      hud.missionTimer.textContent = timer;
+      hud.missionTimer.textContent = card.timer;
     } else {
       hud.mission.style.display = 'none';
     }
@@ -516,6 +528,84 @@ export function createRenderer(canvas, hud) {
       hud.toast.style.display = 'none';
     }
     hud.hint.style.display = state.time < 14 && screen === SCREEN_PLAY ? 'block' : 'none';
+
+    const playing = screen === SCREEN_PLAY;
+    // District + respect (top-left, under the topbar).
+    if (playing) {
+      const d = districtAt(player.x, player.z);
+      const standing = Math.round(state.standing[d.name] ?? 58);
+      hud.district.style.display = 'block';
+      hud.districtName.textContent = d.name;
+      hud.districtStand.textContent = `${standingLabel(standing)} ${standing}`;
+      hud.respectFill.style.width = `${clamp((player.respect / RESPECT.max) * 100, 0, 100)}%`;
+      hud.respectText.textContent = `RESPECT ${player.respect}/${RESPECT.max} · ${respectRank(player.respect)}`;
+    } else {
+      hud.district.style.display = 'none';
+    }
+    // Police roster (right side, under the minimap): live units only.
+    if (playing && player.wanted > 0) {
+      const roster = policeRoster(state);
+      const html = roster.units.map((u) => (
+        `<div class="roster-row${u.lost ? ' lost' : ''}"><span class="roster-call">${u.callsign}</span>`
+        + `<span class="roster-role">${u.role}</span><span class="roster-dist">${u.dist}m</span></div>`
+      )).join('');
+      const key = `${roster.code}|${roster.count}|${html}`;
+      if (key !== lastRoster) {
+        lastRoster = key;
+        hud.rosterTitle.textContent = `PCPD RESPONSE ${roster.count} UNIT${roster.count === 1 ? '' : 'S'} · ${roster.code}`;
+        hud.rosterList.innerHTML = html || '<div class="roster-row">NO UNITS IN PURSUIT</div>';
+      }
+      hud.roster.style.display = 'block';
+    } else {
+      hud.roster.style.display = 'none';
+      lastRoster = '';
+    }
+    // Car identity (right side, under the roster) while driving.
+    if (playing && player.inCar) {
+      const car = player.inCar;
+      const gear = Math.min(5, 1 + Math.floor(Math.abs(car.speed) / 8));
+      hud.carinfo.style.display = 'block';
+      hud.carName.textContent = carModelName(car);
+      hud.carStats.textContent = `COND ${Math.max(0, Math.round(car.health))}% · TUNE ${car.tune} · G${gear}`;
+    } else {
+      hud.carinfo.style.display = 'none';
+    }
+    // Crew dialogue (bottom centre, above the mission card).
+    if (playing && state.dialog && state.dialogTimer > 0) {
+      const crew = CREW[state.dialog.who] || CREW.marina;
+      const key = `${crew.name}|${state.dialog.text}`;
+      if (key !== lastDialog) {
+        lastDialog = key;
+        hud.dialogFace.textContent = crew.initial;
+        hud.dialogFace.style.background = crew.color;
+        hud.dialogName.textContent = `${crew.name} · ${crew.role}`;
+        hud.dialogText.textContent = state.dialog.text;
+      }
+      hud.dialog.style.display = 'flex';
+    } else {
+      hud.dialog.style.display = 'none';
+      lastDialog = '';
+    }
+    // Weapon wheel (bottom-right): five named slots, locked ones dimmed.
+    if (playing) {
+      const html = WEAPONS.map((w, i) => {
+        const unlocked = player.respect >= RESPECT.unlock[i];
+        const current = player.weapon === i;
+        const sub = unlocked
+          ? (w.ammo === '∞' ? `∞ · ${w.damage}` : `AMMO ${player.ammo} · ${w.damage}`)
+          : `LOCKED · RESP ${RESPECT.unlock[i]}`;
+        return `<div class="wheel-slot${current ? ' current' : ''}${unlocked ? '' : ' locked'}">`
+          + `<div class="wheel-name">${w.name}</div><div class="wheel-sub">${sub}</div></div>`;
+      }).join('');
+      if (html !== lastWheel) {
+        lastWheel = html;
+        hud.wheel.innerHTML = `<div class="wheel-title">WEAPONS — Q TO CYCLE</div>${html}`;
+      }
+      hud.wheel.style.display = 'block';
+    } else {
+      hud.wheel.style.display = 'none';
+      lastWheel = '';
+    }
     drawMinimap(state);
   }
 

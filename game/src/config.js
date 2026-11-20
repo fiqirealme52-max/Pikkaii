@@ -7,6 +7,23 @@ export const STEP = 1 / 60;
 
 export const VIEW = { width: 1280, height: 720 };
 
+/**
+ * The 32-bit (PS1-era) look: the 3D scene is rendered into a low-resolution
+ * framebuffer and upscaled with nearest-neighbour filtering, vertices snap
+ * to the low-res pixel grid (the classic wobble), and colours are quantised
+ * to 15-bit with ordered dithering. The DOM HUD stays crisp on top, like a
+ * PS1 game's HUD. Toggle `enabled` off to get the smooth render back.
+ */
+export const RETRO = {
+  enabled: true,
+  /** Internal render width in pixels; height follows the canvas aspect. */
+  width: 320,
+  /** Colour levels per channel (32 = PS1's 15-bit colour). */
+  levels: 32,
+  /** 1 = ordered 2x2 Bayer dither on the upscale, 0 = plain quantisation. */
+  dither: 1,
+};
+
 export const WORLD = { width: 3600, depth: 2600 };
 
 /** The city grid: roads run every BLOCK+ROAD units; blocks hold buildings, parks and lots. */

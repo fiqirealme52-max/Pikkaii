@@ -95,6 +95,57 @@ export const WANTED = {
   max: 5,
 };
 
+/** Respect 0..550: earned by finishing jobs and pickups, spent (in the
+ * fiction) on unlocking weapons. Rank names live in systems.js. */
+export const RESPECT = {
+  missionDone: 60,
+  pickup: 4,
+  rivalDown: 8,
+  copDown: 15,
+  max: 550,
+  /** Respect needed to unlock each weapon wheel slot (fists + pistol free). */
+  unlock: [0, 0, 120, 220, 350],
+};
+
+/** Weapon tuning, indexed like the wheel in systems.js: damage and the
+ * seconds between shots. Fists use the punch path; the rest share bullets. */
+export const WEAPON_STATS = [
+  { damage: 25, interval: 0.45 }, // FISTS
+  { damage: 34, interval: 0.22 }, // VESPER 9MM
+  { damage: 22, interval: 0.09 }, // MAKO SMG
+  { damage: 70, interval: 0.7 }, // BREAKER 12G
+  { damage: 55, interval: 0.16 }, // KESTREL RIFLE
+];
+
+/**
+ * Crew dialogue: who says what, and when. startMission plays the briefing
+ * line; stage changes play the next line, so every job opens with a face
+ * and a voice instead of a silent marker.
+ */
+export const CREW_LINES = {
+  'first-wheels': [
+    { who: 'marina', text: '"You need wheels, Rico. Borrow one. The paint shop on Coral Ave will make it yours."' },
+    { who: 'marco', text: '"Bring it in one piece and I will make it look like it was always yours, boss."' },
+  ],
+  'pizza-run': [
+    { who: 'marina', text: '"Three parcels, three doors, no questions. The clock is already running."' },
+    { who: 'mira', text: '"Doors one and two are on my route. The third one — watch yourself, the street is hot."' },
+  ],
+  'harbor-heat': [
+    { who: 'marina', text: '"The Rats took my briefcase at the harbor. Get it back. Loud is fine."' },
+    { who: 'marco', text: '"Four Rats, Rico. They shoot back. Make it count."' },
+    { who: 'marina', text: '"Got it. Bring it to the hideout. And Rico — do not stop for anyone."' },
+  ],
+  getaway: [
+    { who: 'mira', text: '"You tripped every alarm in the city. Three stars, Rico. Lose them, then come home."' },
+    { who: 'marina', text: '"The hideout door is open. Get here in one piece and we call it even for today."' },
+  ],
+  'big-score': [
+    { who: 'marina', text: '"Last job, Rico. The bank vault, then the boat. After this, you are free."' },
+    { who: 'marco', text: '"Vault is open! Grab the cash and run — the whole city is coming."' },
+  ],
+};
+
 /** Cash pickups and mission rewards, in dollars. */
 export const ECONOMY = { startMoney: 250, pickupValue: 60, bustFine: 150 };
 

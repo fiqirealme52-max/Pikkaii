@@ -69,15 +69,15 @@ export function dayNight(clock) {
   ];
   const mix3 = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
   const dayTop = [0.25, 0.5, 0.95];
-  const duskTop = [0.45, 0.3, 0.65];
+  const duskTop = [0.52, 0.24, 0.62];
   const nightTop = [0.05, 0.08, 0.2];
   const dayBot = [0.85, 0.75, 0.55];
-  const duskBot = [1, 0.45, 0.2];
+  const duskBot = [1, 0.42, 0.12];
   const nightBot = [0.1, 0.12, 0.25];
   const skyTop = mix3(mix3(dayTop, duskTop, dusk), nightTop, night);
   const skyBottom = mix3(mix3(dayBot, duskBot, dusk), nightBot, night);
   const fogColor = [
-    0.68 - night * 0.58 + dusk * 0.18,
+    0.68 - night * 0.58 + dusk * 0.24,
     0.7 - night * 0.56 + dusk * 0.02,
     0.85 - night * 0.62 - dusk * 0.05,
   ];

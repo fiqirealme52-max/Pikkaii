@@ -31,15 +31,30 @@ function angleDiff(a, b) {
   return d;
 }
 
-/** A car body: long box, glass cabin, four wheels — front toward local +x. */
+/** A car body: stepped hood and trunk, glass cabin with a roof, slanted
+ * windshield and rear glass, grille, bumpers and hubcaps — front toward
+ * local +x. The police light bar in the glow mesh still sits on the roof. */
 function buildCarMesh(color) {
   const b = new MeshBuilder();
-  b.box(0, 0.85, 0, CAR.length, 1.1, CAR.width, color, { top: color });
-  b.box(-0.4, 1.75, 0, 3.4, 0.9, 3.0, '#1c2733');
-  b.box(0, 0.5, 0, CAR.length + 0.2, 0.5, CAR.width - 0.4, '#1c1f26');
+  // Lower body (y 0.3..1.1), then hood and trunk steps.
+  b.box(0, 0.7, 0, CAR.length, 0.8, CAR.width, color, { top: color });
+  b.box(2.6, 0.95, 0, 1.6, 0.5, CAR.width - 0.4, color); // hood
+  b.box(-2.7, 0.95, 0, 1.4, 0.5, CAR.width - 0.4, color); // trunk
+  // Glass cabin (x -2.0..1.0, y 1.1..2.0) with a body-colour roof.
+  b.box(-0.5, 1.55, 0, 3.0, 0.9, 2.9, '#1c2733');
+  b.box(-0.5, 2.08, 0, 2.6, 0.25, 2.6, color);
+  // Slanted windshield and rear glass.
+  b.quad([1.35, 1.05, 1.45], [1.35, 1.05, -1.45], [1.0, 1.95, -1.45], [1.0, 1.95, 1.45], '#8fd4e8');
+  b.quad([-2.4, 1.05, -1.45], [-2.4, 1.05, 1.45], [-2.0, 1.95, 1.45], [-2.0, 1.95, -1.45], '#8fd4e8');
+  // Grille and bumpers.
+  b.box(3.62, 0.65, 0, 0.18, 0.5, 2.2, '#1c1f26');
+  b.box(3.65, 0.45, 0, 0.24, 0.35, CAR.width - 0.2, '#c0c8d0');
+  b.box(-3.65, 0.45, 0, 0.24, 0.35, CAR.width - 0.2, '#c0c8d0');
+  // Wheels with hubcaps.
   for (const wx of [-2.3, 2.3]) {
     for (const wz of [-1.7, 1.7]) {
       b.box(wx, 0.55, wz, 1.4, 1.1, 0.5, '#14161a');
+      b.box(wx, 0.55, wz + (wz > 0 ? 0.28 : -0.28), 0.7, 0.55, 0.1, '#c0c8d0');
     }
   }
   return b;
@@ -114,6 +129,29 @@ function buildSkyDome() {
   return b;
 }
 
+/** Ten clouds, each a cluster of three overlapping slabs at slightly
+ * different heights and offsets, so they read as puffy clouds from below
+ * instead of one hard-edged rectangle. */
+function buildCloudMesh() {
+  const b = new MeshBuilder();
+  const spots = [
+    [600, 320, 500, 300, 110], [1600, 360, 900, 360, 130], [2600, 300, 400, 270, 100],
+    [900, 400, 1600, 320, 120], [2200, 340, 1900, 350, 110], [3200, 380, 1100, 300, 110],
+    [300, 350, 2000, 270, 95], [2900, 330, 2100, 310, 110], [1400, 390, 300, 280, 100],
+    [3300, 310, 1800, 320, 120],
+  ];
+  for (const [x, y, z, w, d] of spots) {
+    // Main slab, then two smaller puffs offset up and to the sides.
+    b.quad([x - w / 2, y, z - d / 2], [x + w / 2, y, z - d / 2],
+      [x + w / 2, y, z + d / 2], [x - w / 2, y, z + d / 2], '#ffffff');
+    b.quad([x - w * 0.28, y + 7, z - d * 0.3], [x + w * 0.32, y + 7, z - d * 0.3],
+      [x + w * 0.32, y + 7, z + d * 0.3], [x - w * 0.28, y + 7, z + d * 0.3], '#ffffff');
+    b.quad([x - w * 0.2, y + 13, z - d * 0.22], [x + w * 0.24, y + 13, z - d * 0.22],
+      [x + w * 0.24, y + 13, z + d * 0.22], [x - w * 0.2, y + 13, z + d * 0.22], '#ffffff');
+  }
+  return b;
+}
+
 export function createRenderer(canvas, hud) {
   const glr = createGLRenderer(canvas);
   const minimap = hud.minimap.getContext('2d');
@@ -132,6 +170,7 @@ export function createRenderer(canvas, hud) {
   const heliMesh = glr.createMesh(buildHeliMesh());
   const rotorMesh = glr.createMesh(buildRotorMesh());
   const skyMesh = glr.createMesh(buildSkyDome());
+  const cloudMesh = glr.createMesh(buildCloudMesh());
   const beaconMesh = meshFrom((b) => b.cylinder(0, 0, 0, 3.5, 50, '#ff4d9d', 12));
   const ringMesh = meshFrom((b) => b.cylinder(0, 0, 0, 9, 0.5, '#ff4d9d', 20));
   const beamMesh = meshFrom((b) => b.cylinderTapered(0, 0, 0, 1, 4, 1, '#fff2b0', 10));
@@ -246,6 +285,17 @@ export function createRenderer(canvas, hud) {
     // Sky dome first, centred on the camera, no depth write.
     glr.drawMesh(skyMesh, mat4FromTRS(eye[0], 0, eye[2], 0, 1, 1, 1), {
       sky: 1, noFog: 1, depthWrite: false, cull: false,
+    });
+
+    // Clouds, tinted by the time of day: white at noon, pink at dusk, dark
+    // at night. Drawn right after the dome, before the city.
+    const cloudTint = [
+      1 - env.night * 0.78,
+      1 - env.dusk * 0.45 - env.night * 0.74,
+      1 - env.dusk * 0.35 - env.night * 0.58,
+    ];
+    glr.drawMesh(cloudMesh, mat4FromTRS(0, 0, 0, 0, 1, 1, 1), {
+      unlit: 1, noFog: 1, cull: false, depthWrite: false, alpha: 0.35, tint: cloudTint,
     });
 
     // The city, its glow, the water and the pier.
@@ -481,8 +531,13 @@ export function createRenderer(canvas, hud) {
   /** Paint one frame: the 3D world, then the HUD or a menu overlay. */
   function draw(state, screen, best) {
     const time = state.time;
+    // The whole 3D scene goes through the 32-bit pass: render it into the
+    // low-res framebuffer, then upscale it to the screen. The DOM HUD is
+    // drawn by the browser afterwards and stays crisp on top.
+    glr.beginRetro();
     const { env } = drawScene(state, screen, time);
     drawDynamic(state, time, env);
+    glr.endRetro();
     drawHud(state, screen, best);
     if (screen === SCREEN_TITLE) {
       setOverlay('title', true, [

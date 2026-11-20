@@ -1,12 +1,12 @@
 // Neon Bay — the gta6-01 entry (Node 22, standard library only). The game is
-// this directory's game/ folder: a top-down open-world crime game in plain
-// static files a desktop browser loads offline (game/index.html and its ES
-// modules, no library and no network request). The program hands it in: it
-// copies game/ and screenshots/ from beside this file to /output and writes
-// /output/dossier.json, the summary the judge reads, with the vendored
-// make.fun library. The city, its traffic, its police, its five missions and
-// its HUD all live in game/src/; the screenshots are real renders of that
-// game, staged by game/src/shots.js.
+// this directory's game/ folder: a 3D open-world crime game in plain static
+// files a desktop browser loads offline (game/index.html and its ES modules, a
+// hand-written WebGL renderer in game/src/gl.js, no library and no network
+// request). The program hands it in: it copies game/ and screenshots/ from
+// beside this file to /output and writes /output/dossier.json, the summary the
+// judge reads, with the vendored make.fun library. The city, its traffic, its
+// police helicopter, its five missions and its HUD all live in game/src/; the
+// screenshots are real renders of that game, staged by game/src/shots.js.
 //
 // Serve it locally with `node serve.ts`, then open http://localhost:8080.
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:

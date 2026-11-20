@@ -196,6 +196,15 @@ export function stageShot(name, world) {
     // before the frame is taken — otherwise the harbor reads as debris.
     playFor(world, 2, idleInput);
     state.clock = 6; // late golden hour over the harbor
+    // The crew closes the job on screen: Marina's return line, held for the
+    // frame, so the mission shot shows the dialogue panel.
+    state.dialog = {
+      who: 'marina',
+      text: state.mission.stage === 'return'
+        ? '"Got it. Bring it to the hideout. And Rico — do not stop for anyone."'
+        : '"The Rats took my briefcase at the harbor. Get it back. Loud is fine."',
+    };
+    state.dialogTimer = 999;
     return { screen: SCREEN_PLAY, best: state.player.money };
   }
   // start (and anything else): the title over a living city at golden hour.

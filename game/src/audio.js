@@ -1,7 +1,14 @@
 // Sound, synthesized live with WebAudio: no audio files, no network.
-// Engine hum follows speed, the siren wails while the police chase, and every
-// action (shot, pickup, mission done) has its own short blip. Everything is
-// guarded, so a browser with no audio still plays silently.
+// Engine hum follows speed, the siren wails while the police chase, every
+// action (shot, pickup, mission done) has its own short blip, and the radio
+// (R to change station) plays a tiny synthwave loop. Everything is guarded,
+// so a browser with no audio still plays silently.
+
+const STATIONS = [
+  { name: 'NEON FM — Synthwave', root: 110, pattern: [0, 0, 3, 5, 7, 5, 3, 0], tempo: 0.22 },
+  { name: 'PALM RADIO — Chill', root: 98, pattern: [0, 2, 4, 2, 0, -2, -4, -2], tempo: 0.3 },
+  { name: 'HARBOR BEATS — Drive', root: 130, pattern: [0, 0, 7, 0, 5, 0, 3, 5], tempo: 0.16 },
+];
 
 export function createAudio() {
   let context = null;
@@ -11,6 +18,10 @@ export function createAudio() {
   let sirenGain = null;
   let sirenTimer = 0;
   let sirenHigh = false;
+  let radioTimer = null;
+  let radioStep = 0;
+  let radioMuted = false;
+  let station = 0;
 
   function ensure() {
     if (context) return context;
@@ -37,8 +48,8 @@ export function createAudio() {
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.type = type || 'square';
-      osc.frequency.setValueAtTime(freq, ctx.currentTime);
-      if (slideTo) osc.frequency.exponentialRampToValueAtTime(slideTo, ctx.currentTime + duration);
+      osc.frequency.setValueAtTime(Math.max(20, freq), ctx.currentTime);
+      if (slideTo) osc.frequency.exponentialRampToValueAtTime(Math.max(20, slideTo), ctx.currentTime + duration);
       gain.gain.setValueAtTime(volume || 0.08, ctx.currentTime);
       gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
       osc.connect(gain);
@@ -48,6 +59,25 @@ export function createAudio() {
     } catch {
       // Sound is garnish: never let it break the game.
     }
+  }
+
+  function radioNote() {
+    const st = STATIONS[station];
+    if (radioMuted) return;
+    const semis = st.pattern[radioStep % st.pattern.length];
+    const freq = st.root * Math.pow(2, semis / 12);
+    blip(freq, st.tempo * 0.9, 'triangle', 0.05);
+    if (radioStep % 4 === 0) blip(freq / 2, st.tempo * 1.8, 'sine', 0.07);
+    radioStep += 1;
+  }
+
+  function startRadio() {
+    if (radioTimer) return;
+    radioTimer = setInterval(radioNote, STATIONS[station].tempo * 1000);
+  }
+
+  function stopRadio() {
+    if (radioTimer) { clearInterval(radioTimer); radioTimer = null; }
   }
 
   return {
@@ -68,6 +98,23 @@ export function createAudio() {
     hurt() { blip(160, 0.18, 'sawtooth', 0.12, 70); },
     /** A car door / entering a car. */
     door() { blip(300, 0.08, 'square', 0.06, 180); },
+    /** Next radio station. Returns the station name for the HUD. */
+    nextStation() {
+      station = (station + 1) % STATIONS.length;
+      radioStep = 0;
+      if (radioTimer) {
+        clearInterval(radioTimer);
+        radioTimer = setInterval(radioNote, STATIONS[station].tempo * 1000);
+      }
+      return STATIONS[station].name;
+    },
+    stationName() { return STATIONS[station].name; },
+    toggleRadio() {
+      radioMuted = !radioMuted;
+      return radioMuted;
+    },
+    radioOn() { startRadio(); },
+    radioOff() { stopRadio(); },
 
     /** Engine hum: call every frame with speed 0..1 while driving. */
     engine(speed) {

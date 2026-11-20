@@ -91,6 +91,12 @@ function walkInput(world, tx, tz) {
   };
 }
 
+/** Stand still and let the scene settle: particles fade, the camera stops
+ * moving, so a staged frame is clean instead of mid-explosion. */
+function idleInput() {
+  return { axes: { x: 0, y: 0, run: false }, actions: 0, aimX: 1800, aimZ: 2400, cameraYaw: 0 };
+}
+
 /** Step the world for `seconds`, feeding it the input each frame. */
 function playFor(world, seconds, inputFn, audio) {
   const steps = Math.floor(seconds / STEP);
@@ -182,6 +188,13 @@ export function stageShot(name, world) {
       world.step(STEP, input, null);
       if (state.mission.stage === 'return') break;
     }
+    // Face back toward the city (the hideout is north) before the camera
+    // settles, so the frame shows Rico with downtown behind him instead of
+    // an empty stretch of beach and sea.
+    state.player.angle = -Math.PI / 2;
+    // Let the fight's blood and spark particles fade and the camera settle
+    // before the frame is taken — otherwise the harbor reads as debris.
+    playFor(world, 2, idleInput);
     state.clock = 6; // late golden hour over the harbor
     return { screen: SCREEN_PLAY, best: state.player.money };
   }
